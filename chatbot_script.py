@@ -38,7 +38,6 @@ embedding = OpenAIEmbeddings()
 # Load PDFs
 pdf_folder_path = os.getenv("PDF_FOLDER_PATH")
 
-@lru_cache(maxsize=None)
 def load_pdf_docs():
     pdf_docs = []
     for filename in os.listdir(pdf_folder_path):
@@ -55,12 +54,26 @@ try:
     vectorstore = PGVector(
         connection_string=CONNECTION_STRING,
         embedding_function=embedding,
-        collection_name="medical_documents"
+        collection_name="medical_documents",
+        use_jsonb=True
     )
     logger.info("Successfully connected to the vector store.")
 except Exception as e:
     logger.error(f"Failed to connect to the vector store: {str(e)}")
     raise
+
+# Load PDFs and add to vectorstore at startup
+def load_pdfs_to_vectorstore():
+    pdf_docs = load_pdf_docs()
+    if pdf_docs:
+        splits = text_splitter.split_documents(pdf_docs)
+        vectorstore.add_documents(splits)
+        logger.info(f"Loaded {len(splits)} document chunks from PDFs into the vector store.")
+    else:
+        logger.warning("No PDF documents found in the specified folder.")
+
+# Call this function at startup
+load_pdfs_to_vectorstore()
 
 # Create a retriever
 retriever = vectorstore.as_retriever()
@@ -112,80 +125,9 @@ Objectif : Être un assistant médical fiable, informatif et éthique, aidant le
 def get_db_connection():
     return psycopg2.connect(CONNECTION_STRING)
 
-def create_patients_table_if_not_exists():
-    with get_db_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS patients (
-                    id SERIAL PRIMARY KEY,
-                    name VARCHAR(100) NOT NULL,
-                    age INTEGER,
-                    medical_history TEXT,
-                    last_updated TIMESTAMP,
-                    last_embedded TIMESTAMP
-                )
-            """)
-        conn.commit()
-    logger.info("Patients table created or already exists.")
-
-# Function to embed new patient data
-def embed_new_patient(patient_data):
-    doc = Document(
-        page_content=f"Patient ID: {patient_data['id']}\n"
-                     f"Name: {patient_data['name']}\n"
-                     f"Age: {patient_data['age']}\n"
-                     f"Medical History: {patient_data['medical_history']}",
-        metadata={"patient_id": patient_data['id']}
-    )
-    
-    vectorstore.add_documents([doc])
-    
-    with get_db_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                "UPDATE patients SET last_embedded = %s WHERE id = %s",
-                (datetime.now(), patient_data['id'])
-            )
-        conn.commit()
-
-# Function to update existing patient embedding
-def update_patient_embedding(patient_id):
-    with get_db_connection() as conn:
-        with conn.cursor(cursor_factory=DictCursor) as cur:
-            cur.execute("SELECT * FROM patients WHERE id = %s", (patient_id,))
-            patient_data = cur.fetchone()
-    
-    if patient_data:
-        vectorstore.delete(filter={"patient_id": patient_id})
-        embed_new_patient(patient_data)
-    else:
-        logger.warning(f"Patient with ID {patient_id} not found.")
-
-# Function to check and update patient embeddings
-def check_and_update_embeddings():
-    try:
-        with get_db_connection() as conn:
-            with conn.cursor(cursor_factory=DictCursor) as cur:
-                cur.execute("""
-                    SELECT * FROM patients 
-                    WHERE last_embedded IS NULL 
-                    OR last_embedded < last_updated
-                """)
-                patients_to_update = cur.fetchall()
-        
-        for patient in patients_to_update:
-            embed_new_patient(patient)
-    except psycopg2.errors.UndefinedTable:
-        logger.warning("Patients table does not exist. Creating it now.")
-        create_patients_table_if_not_exists()
-    except Exception as e:
-        logger.error(f"Error in check_and_update_embeddings: {str(e)}")
-
 @app.route('/chatbot/ask', methods=['POST'])
 def chat():
     try:
-        check_and_update_embeddings()
-        
         data = request.json
         message = data.get('message')
         if not message:
@@ -204,52 +146,6 @@ def chat():
         return jsonify({"response": response['answer']})
     except Exception as e:
         logger.error(f"Error in chat endpoint: {str(e)}")
-        return jsonify({"error": "An internal error occurred"}), 500
-
-@app.route('/add_patient', methods=['POST'])
-def add_patient():
-    try:
-        patient_data = request.json
-        
-        with get_db_connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute("""
-                    INSERT INTO patients (name, age, medical_history, last_updated)
-                    VALUES (%s, %s, %s, %s)
-                    RETURNING id
-                """, (patient_data['name'], patient_data['age'], 
-                      patient_data['medical_history'], datetime.now()))
-                patient_id = cur.fetchone()[0]
-            conn.commit()
-        
-        patient_data['id'] = patient_id
-        embed_new_patient(patient_data)
-        
-        return jsonify({"message": "Patient added and embedded successfully", "id": patient_id}), 200
-    except Exception as e:
-        logger.error(f"Error in add_patient endpoint: {str(e)}")
-        return jsonify({"error": "An internal error occurred"}), 500
-
-@app.route('/update_patient/<int:patient_id>', methods=['PUT'])
-def update_patient(patient_id):
-    try:
-        patient_data = request.json
-        
-        with get_db_connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute("""
-                    UPDATE patients 
-                    SET name = %s, age = %s, medical_history = %s, last_updated = %s
-                    WHERE id = %s
-                """, (patient_data['name'], patient_data['age'], 
-                      patient_data['medical_history'], datetime.now(), patient_id))
-            conn.commit()
-        
-        update_patient_embedding(patient_id)
-        
-        return jsonify({"message": "Patient updated and re-embedded successfully"}), 200
-    except Exception as e:
-        logger.error(f"Error in update_patient endpoint: {str(e)}")
         return jsonify({"error": "An internal error occurred"}), 500
 
 @app.route('/add_json_data', methods=['POST'])
@@ -274,20 +170,11 @@ def add_json_data():
 @app.route('/load_pdfs', methods=['POST'])
 def load_pdfs():
     try:
-        pdf_docs = load_pdf_docs()
-        if not pdf_docs:
-            logger.warning("No PDF documents found in the specified folder.")
-            return jsonify({"message": "No PDF documents found"}), 200
-        
-        splits = text_splitter.split_documents(pdf_docs)
-        vectorstore.add_documents(splits)
-        return jsonify({"message": f"Processed and added {len(splits)} document chunks to the vector store"}), 200
+        load_pdfs_to_vectorstore()
+        return jsonify({"message": "PDFs processed and added to the vector store"}), 200
     except Exception as e:
         logger.error(f"Error in load_pdfs endpoint: {str(e)}")
         return jsonify({"error": "An internal error occurred"}), 500
-
-# Create patients table if it doesn't exist
-create_patients_table_if_not_exists()
 
 if __name__ == '__main__':
     app.run(debug=os.getenv("FLASK_DEBUG", "False").lower() == "true")
