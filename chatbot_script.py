@@ -79,48 +79,34 @@ load_pdfs_to_vectorstore()
 retriever = vectorstore.as_retriever()
 
 # Create a chat model
-llm = ChatOpenAI(model_name="gpt-4", temperature=0.7)
+llm = ChatOpenAI(model_name="gpt-4o", temperature=0.7)
 
 # Create a conversational chain
 qa_chain = ConversationalRetrievalChain.from_llm(llm, retriever=retriever)
 
 # Define context
-context = """
-Tâche : Répondre aux questions des médecins concernant les connaissances médicales et les informations sur les patients. Identifier les symptômes, proposer des diagnostics potentiels et prescrire des médicaments marocains. Préciser que les suggestions ne sont pas 100% précises et doivent être validées par un professionnel de santé.
+context ="""
+ Vous êtes un assistant médical avancé conçu pour aider les médecins et professionnels de santé au Maroc. Votre base de connaissances couvre la médecine générale et spécialisée, avec une expertise particulière sur les pratiques et médicaments marocains.
 
-Persona : Vous êtes un expert en santé familiarisé avec la médication marocaine et les pratiques médicales internationales. Vous possédez une vaste connaissance en médecine générale et spécialisée.
+Objectif : Fournir des informations médicales précises, à jour et pertinentes pour aider les professionnels de santé dans leur pratique quotidienne.
 
-Langue : Répondez en français, sauf si on vous demande explicitement d'utiliser une autre langue.
+Directives :
+1. Répondez en français, sauf demande contraire.
+2. Adaptez la longueur et le détail de vos réponses selon la complexité de la question.
+3. Basez vos réponses sur les dernières preuves médicales et directives cliniques.
+4. Intégrez des informations spécifiques au contexte médical marocain quand c'est pertinent.
+5. Fournissez des explications claires sur les raisonnements diagnostiques et les recommandations de traitement.
+6. Incluez des conseils sur la prévention et la gestion des maladies si approprié.
+7. Vous pouvez suggérer des diagnostics potentiels et des traitements, y compris des médicaments marocains spécifiques.
 
-Format :
-- Fournissez des réponses concises (4 lignes maximum) en points clairs, sauf si plus de détails sont demandés.
-- Élaborez jusqu'à 1000 lignes si des informations détaillées sont requises.
-- Structurez vos réponses de manière logique et facile à lire.
+Ton : Professionnel, précis et scientifique, tout en restant accessible et collaboratif.
 
-Ton :
-- Professionnel mais bienveillant.
-- Langage clair, précis et élégant.
-- Empathique envers les préoccupations des patients et des médecins.
-
-Contenu :
-- Basez vos réponses sur les dernières preuves médicales et directives cliniques.
-- Intégrez, le cas échéant, des informations spécifiques au contexte médical marocain.
-- Fournissez des explications claires sur les raisonnements diagnostiques et les recommandations de traitement.
-- Incluez des conseils sur la prévention et la gestion des maladies lorsque c'est pertinent.
-
-Rappel important :
-- Spécifiez toujours que les suggestions fournies ne sont pas définitives et nécessitent la supervision d'un professionnel de santé.
-- Encouragez la consultation d'un médecin pour un diagnostic et un traitement précis.
+Rappels :
+- Bien que vos réponses soient basées sur des informations médicales solides, rappelez aux utilisateurs l'importance du jugement clinique et de l'évaluation individuelle de chaque patient.
 - Soulignez l'importance de la confidentialité des informations médicales.
 
-Limites :
-- Ne posez pas de diagnostic définitif.
-- N'encouragez pas l'automédication.
-- Ne fournissez pas d'informations médicales controversées ou non prouvées.
-
-Objectif : Être un assistant médical fiable, informatif et éthique, aidant les médecins dans leur pratique quotidienne tout en promouvant des soins de santé sûrs et de haute qualité.
+Votre rôle est d'être une ressource fiable et un support pour les professionnels de santé, en les aidant à prendre des décisions éclairées pour leurs patients.
 """
-
 # Initialize PostgreSQL connection
 def get_db_connection():
     return psycopg2.connect(CONNECTION_STRING)
@@ -148,25 +134,38 @@ def chat():
         logger.error(f"Error in chat endpoint: {str(e)}")
         return jsonify({"error": "An internal error occurred"}), 500
 
-@app.route('/add_json_data', methods=['POST'])
-def add_json_data():
+@app.route('/upsert-client-embedding', methods=['POST'])
+def upsert_client_embedding():
     try:
-        data = request.json
+        client = request.json
+        if not client:
+            return jsonify({"error": "No client data provided"}), 400
         
-        if not data:
-            return jsonify({"error": "No JSON data provided"}), 400
+        client_id = str(client['id'])
+        client_text = f"{client['name']} {client['details']}"
         
-        documents = [Document(page_content=str(value), metadata={"key": key}) for key, value in data.items()]
+        # Create a Document object
+        doc = Document(
+            page_content=client_text,
+            metadata={"source": f"client_{client_id}", "id": client_id}
+        )
         
-        splits = text_splitter.split_documents(documents)
+        # Split the document (even though it's just one, to maintain consistency with your existing code)
+        splits = text_splitter.split_documents([doc])
         
+        # Add the document to the vectorstore
         vectorstore.add_documents(splits)
         
-        return jsonify({"message": "JSON data added successfully"}), 200
+        logger.info(f"Upserted embedding for client ID: {client_id}")
+        return jsonify({"status": "success", "message": "Client embedding upserted"}), 200
     except Exception as e:
-        logger.error(f"Error in add_json_data endpoint: {str(e)}")
+        logger.error(f"Error in upsert_client_embedding endpoint: {str(e)}")
         return jsonify({"error": "An internal error occurred"}), 500
 
+# Add this new route to your existing Flask app
+
+
+# Add this new route to your existing Flask app
 @app.route('/load_pdfs', methods=['POST'])
 def load_pdfs():
     try:
