@@ -72,7 +72,6 @@ def load_pdfs_to_vectorstore():
     else:
         logger.warning("No PDF documents found in the specified folder.")
 
-# Call this function at startup
 load_pdfs_to_vectorstore()
 
 # Create a retriever
