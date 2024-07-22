@@ -253,7 +253,7 @@ def process_dlq_messages(dlq_topic):
 
 
 
-
+chat_history=[{"Assistant":"how can I help you"}]
 @app.route('/chatbot/ask', methods=['POST'])
 def chat():
     try:
@@ -261,15 +261,18 @@ def chat():
         message = data.get('message')
         if not message:
             return jsonify({"error": "No message provided"}), 400
-        logger.info(f'Received message: {message}')
-        docs = retriever.get_relevant_documents(message)
-        retrieved_context = "\n".join([
+        else:
+            logger.info(f'Received message: {message}')
+            docs = retriever.get_relevant_documents(message)
+            retrieved_context = "\n".join([
             f"{'Profile' if doc.metadata['type'] == 'profile' else 'Report'}: {doc.page_content}"
             for doc in docs
-        ])
-        combined_context = f"{context}\n\nRelevant Information:\n{retrieved_context}\n\nQ: {message}\nA:"
-        response = qa_chain({"question": combined_context, "chat_history": []})
-        return jsonify({"response": response['answer']})
+            ])
+            combined_context = f"{context}\n\nRelevant Information:\n{retrieved_context}\n\nQ: {message}\nA:"
+            response = qa_chain({"question": combined_context, "chat_history": chat_history})
+            chat_history.append({"User":message})
+            chat_history.append({"Assistant":response['answer']})
+            return jsonify({"response": response['answer']})
     except Exception as e:
         logger.error(f"Error in chat endpoint: {str(e)}")
         return jsonify({"error": "An internal error occurred"}), 500
