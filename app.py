@@ -17,11 +17,7 @@ import psycopg2
 import pybreaker
 import time
 
-
-
-
 # hello there :)  happy reading:
-
 
 
 # Load environment variables
@@ -73,7 +69,8 @@ try:
     vectorstore = PGVector(
         connection_string=CONNECTION_STRING,
         embedding_function=embedding,
-        collection_name="medical_documents"
+        collection_name="medical_documents",
+        use_jsonb=True
     )
     logger.info("Successfully connected to the vector store.")
 except Exception as e:
@@ -160,7 +157,9 @@ def retry_with_backoff(max_attempts=3, start_delay=1, max_delay=60):
                         raise
                     time.sleep(delay)
                     delay = min(delay * 2, max_delay)
+
         return wrapper
+
     return decorator
 
 
@@ -177,7 +176,7 @@ def upsert_patient_embedding(profile):
         )
         splits = text_splitter.split_documents([doc])
         vectorstore.add_documents(splits)
-        
+
         logger.info(f"Upserted embedding for profile ID: {profile_id}")
     except Exception as e:
         logger.error(f"Error in upsert_patient_embedding: {str(e)}")
@@ -197,7 +196,7 @@ def upsert_report_embedding(report):
         )
         splits = text_splitter.split_documents([doc])
         vectorstore.add_documents(splits)
-        
+
         logger.info(f"Upserted embedding for report ID: {report_id}")
     except Exception as e:
         logger.error(f"Error in upsert_report_embedding: {str(e)}")
@@ -252,8 +251,6 @@ def process_dlq_messages(dlq_topic):
             # such as moving to a secondary DLQ or alerting an admin
 
 
-
-
 @app.route('/chatbot/ask', methods=['POST'])
 def chat():
     try:
@@ -261,14 +258,17 @@ def chat():
         message = data.get('message')
         if not message:
             return jsonify({"error": "No message provided"}), 400
+
         logger.info(f'Received message: {message}')
+
         docs = retriever.get_relevant_documents(message)
-        retrieved_context = "\n".join([
-            f"{'Profile' if doc.metadata['type'] == 'profile' else 'Report'}: {doc.page_content}"
-            for doc in docs
-        ])
+
+        retrieved_context = "\n".join([doc.page_content for doc in docs])
+
         combined_context = f"{context}\n\nRelevant Information:\n{retrieved_context}\n\nQ: {message}\nA:"
+
         response = qa_chain({"question": combined_context, "chat_history": []})
+
         return jsonify({"response": response['answer']})
     except Exception as e:
         logger.error(f"Error in chat endpoint: {str(e)}")
@@ -291,11 +291,11 @@ if __name__ == '__main__':
     report_thread = Thread(target=process_report_messages)
     patient_dlq_thread = Thread(target=lambda: process_dlq_messages('patient_updates_dlq'))
     report_dlq_thread = Thread(target=lambda: process_dlq_messages('report_updates_dlq'))
-    
+
     patient_thread.start()
     report_thread.start()
     patient_dlq_thread.start()
     report_dlq_thread.start()
-    
+
     # Run Flask app
     app.run(debug=os.getenv("FLASK_DEBUG", "False").lower() == "true")
