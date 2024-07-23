@@ -17,7 +17,6 @@ import psycopg2
 import pybreaker
 import time
 
-
 # Load environment variables
 load_dotenv()
 
@@ -249,6 +248,9 @@ def process_dlq_messages(dlq_topic):
             # such as moving to a secondary DLQ or alerting an admin
 
 
+chat_history = []
+
+
 @app.route('/chatbot/ask', methods=['POST'])
 def chat():
     try:
@@ -256,18 +258,17 @@ def chat():
         message = data.get('message')
         if not message:
             return jsonify({"error": "No message provided"}), 400
-
-        logger.info(f'Received message: {message}')
-
-        docs = retriever.get_relevant_documents(message)
-
-        retrieved_context = "\n".join([doc.page_content for doc in docs])
-
-        combined_context = f"{context}\n\nRelevant Information:\n{retrieved_context}\n\nQ: {message}\nA:"
-
-        response = qa_chain({"question": combined_context, "chat_history": []})
-
-        return jsonify({"response": response['answer']})
+        else:
+            logger.info(f'Received message: {message}')
+            docs = retriever.get_relevant_documents(message)
+            retrieved_context = "\n".join([
+                f"{'Profile' if doc.metadata['type'] == 'profile' else 'Report'}: {doc.page_content}"
+                for doc in docs
+            ])
+            combined_context = f"{context}\n\nRelevant Information:\n{retrieved_context}\n\nQ: {message}\nA:"
+            response = qa_chain({"question": combined_context, "chat_history": chat_history})
+            chat_history.extend([message, response])
+            return jsonify({"response": response['answer']})
     except Exception as e:
         logger.error(f"Error in chat endpoint: {str(e)}")
         return jsonify({"error": "An internal error occurred"}), 500
@@ -284,7 +285,6 @@ def load_pdfs():
 
 
 if __name__ == '__main__':
-    # Start Kafka consumers in separate threads
     patient_thread = Thread(target=process_patient_messages)
     report_thread = Thread(target=process_report_messages)
     patient_dlq_thread = Thread(target=lambda: process_dlq_messages('patient_updates_dlq'))
