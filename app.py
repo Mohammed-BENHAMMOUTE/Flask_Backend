@@ -12,7 +12,8 @@ from langchain_openai import ChatOpenAI
 from langchain.chains import ConversationalRetrievalChain
 from langchain.schema import Document
 from dotenv import load_dotenv
-from flask_jwt_extended import JWTManager, create_access_token, jwt_required
+from flask_jwt_extended import JWTManager, create_access_token, jwt_required, get_jwt_identity
+from functools import wraps
 import logging
 import psycopg2
 import pybreaker
@@ -37,9 +38,8 @@ CORS(app, origins=os.getenv("ALLOWED_ORIGINS", "http://localhost:3000").split(",
 
 # Dummy user store
 users = {
-    "kaoutar": "password123",
-    "salma" : "password012"
-
+    "kaoutar": {"password": "password123", "role": "medecin"},
+    "salma": {"password": "admin123", "role": "admin"}
 }
 
 # Configure logging
@@ -268,17 +268,33 @@ def process_dlq_messages(dlq_topic):
 def login():
     username = request.json.get('username')
     password = request.json.get('password')
-    if users.get(username) == password:
-        access_token = create_access_token(identity=username)
+    user = users.get(username)
+    
+    if user and user['password'] == password:
+        access_token = create_access_token(identity={"username": username, "role": user['role']})
         return jsonify(access_token=access_token)
     return jsonify({"error": "Invalid credentials"}), 401
 
 
 
 
+def role_required(role):
+    def decorator(f):
+        @wraps(f)
+        def decorated_function(*args, **kwargs):
+            claims = get_jwt_identity()
+            if claims['role'] != role:
+                return jsonify({"error": "Access denied"}), 403
+            return f(*args, **kwargs)
+        return decorated_function
+    return decorator
+
+
+
 chat_history=[]
 @app.route('/chatbot/ask', methods=['POST'])
 @jwt_required()
+@role_required('medecin')
 def chat():
     try:
         data = request.json
@@ -302,7 +318,6 @@ def chat():
 
 
 @app.route('/load_pdfs', methods=['POST'])
-@jwt_required()
 def load_pdfs():
     try:
         load_pdfs_to_vectorstore()
