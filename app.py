@@ -17,8 +17,6 @@ import psycopg2
 import pybreaker
 import time
 
-# hello there :)  happy reading:
-
 
 # Load environment variables
 load_dotenv()
