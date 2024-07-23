@@ -12,6 +12,7 @@ from langchain_openai import ChatOpenAI
 from langchain.chains import ConversationalRetrievalChain
 from langchain.schema import Document
 from dotenv import load_dotenv
+from flask_jwt_extended import JWTManager, create_access_token, jwt_required
 import logging
 import psycopg2
 import pybreaker
@@ -29,7 +30,17 @@ load_dotenv()
 
 # Initialize Flask app
 app = Flask(__name__)
+app.config['JWT_SECRET_KEY'] = 'my_jwt_secret_key'
+jwt = JWTManager(app)
 CORS(app, origins=os.getenv("ALLOWED_ORIGINS", "http://localhost:3000").split(","))
+
+
+# Dummy user store
+users = {
+    "kaoutar": "password123",
+    "salma" : "password012"
+
+}
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -253,9 +264,21 @@ def process_dlq_messages(dlq_topic):
             # such as moving to a secondary DLQ or alerting an admin
 
 
+@app.route('/login', methods=['POST'])
+def login():
+    username = request.json.get('username')
+    password = request.json.get('password')
+    if users.get(username) == password:
+        access_token = create_access_token(identity=username)
+        return jsonify(access_token=access_token)
+    return jsonify({"error": "Invalid credentials"}), 401
+
+
+
 
 chat_history=[]
 @app.route('/chatbot/ask', methods=['POST'])
+@jwt_required()
 def chat():
     try:
         data = request.json
@@ -279,6 +302,7 @@ def chat():
 
 
 @app.route('/load_pdfs', methods=['POST'])
+@jwt_required()
 def load_pdfs():
     try:
         load_pdfs_to_vectorstore()
