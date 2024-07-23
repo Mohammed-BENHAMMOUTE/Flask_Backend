@@ -61,6 +61,7 @@ def load_pdf_docs():
     for filename in os.listdir(pdf_folder_path):
         if filename.endswith('.pdf'):
             loader = PyPDFLoader(os.path.join(pdf_folder_path, filename))
+            pages= loader.load()
             pdf_docs.extend(loader.load())
     return pdf_docs
 
@@ -225,7 +226,7 @@ def process_report_messages():
     for message in consumer:
         try:
             upsert_report_embedding(message.value)
-            consumer.commit()
+            consumer.commit
         except pybreaker.CircuitBreakerError as e:
             logger.error(f"Circuit breaker open for report updates: {str(e)}")
             send_to_dlq('report_updates', message)
@@ -253,7 +254,7 @@ def process_dlq_messages(dlq_topic):
 
 
 
-chat_history=[{"Assistant":"how can I help you"}]
+chat_history=[]
 @app.route('/chatbot/ask', methods=['POST'])
 def chat():
     try:
@@ -263,15 +264,14 @@ def chat():
             return jsonify({"error": "No message provided"}), 400
         else:
             logger.info(f'Received message: {message}')
-            docs = retriever.get_relevant_documents(message)
+            docs = retriever.invoke(message)
             retrieved_context = "\n".join([
-            f"{'Profile' if doc.metadata['type'] == 'profile' else 'Report'}: {doc.page_content}"
-            for doc in docs
-            ])
+            "\n".join([doc.page_content for doc in docs])
+             ])
+            logger.info("retrieved the context")
             combined_context = f"{context}\n\nRelevant Information:\n{retrieved_context}\n\nQ: {message}\nA:"
-            response = qa_chain({"question": combined_context, "chat_history": chat_history})
-            chat_history.append({"User":message})
-            chat_history.append({"Assistant":response['answer']})
+            response = qa_chain({"question": combined_context, "chat_history": [(entry['question'], entry['answer']) for entry in chat_history]})
+            chat_history.append({"question":message,"answer":response['answer']})
             return jsonify({"response": response['answer']})
     except Exception as e:
         logger.error(f"Error in chat endpoint: {str(e)}")
