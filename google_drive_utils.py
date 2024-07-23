@@ -29,13 +29,15 @@ def get_drive_service():
     return build('drive', 'v3', credentials=creds)
 
 def list_unprocessed_pdf_files(drive_service):
+    query = "mimeType='application/pdf' and not name contains 'processed_'"
     results = drive_service.files().list(
-        q="mimeType='application/pdf'",
+        q=query,
         fields="nextPageToken, files(id, name)"
     ).execute()
     files = results.get('files', [])
-    logger.info(f"Found {len(files)} PDF files in Drive")
+    logger.info(f"Found {len(files)} unprocessed PDF files in Drive")
     return files
+
 
 def download_file(drive_service, file_id):
     request = drive_service.files().get_media(fileId=file_id)
