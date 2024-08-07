@@ -14,7 +14,7 @@ def job():
 
 
 # Schedule the job to run every day at 3 AM
-schedule.every().day.at("23:47").do(job)
+schedule.every().day.at("03:00").do(job)
 
 if __name__ == "__main__":
     while True:
