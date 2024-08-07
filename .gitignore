@@ -1,7 +1,0 @@
-
-.env
-myenv/
-.vscode/
-.idea/
-__pycache__/
-*.pyc
