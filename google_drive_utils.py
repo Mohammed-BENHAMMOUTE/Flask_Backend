@@ -23,12 +23,10 @@ logger = logging.getLogger(__name__)
 # Update scope to allow managing all Drive files
 SCOPES = ['https://www.googleapis.com/auth/drive']
 
-
 def get_drive_service():
     # Load credentials from the token.json file
     creds = Credentials.from_authorized_user_file('token.json', SCOPES)
     return build('drive', 'v3', credentials=creds)
-
 
 def list_unprocessed_pdf_files(drive_service):
     query = "mimeType='application/pdf' and not name contains 'processed_'"
@@ -50,7 +48,6 @@ def download_file(drive_service, file_id):
         _, done = downloader.next_chunk()
     return file.getvalue()
 
-
 def rename_file(drive_service, file_id, new_name):
     file = drive_service.files().update(
         fileId=file_id,
@@ -58,14 +55,12 @@ def rename_file(drive_service, file_id, new_name):
     ).execute()
     return file
 
-
 def extract_text_from_pdf(pdf_content):
     reader = PdfReader(BytesIO(pdf_content))
     text = ""
     for page in reader.pages:
         text += page.extract_text()
     return text
-
 
 def process_pdfs_from_drive():
     logger.info("Starting to process PDFs from Drive")
@@ -97,7 +92,6 @@ def process_pdfs_from_drive():
             logger.error(f"Error processing file {file['name']}: {str(e)}")
 
     logger.info(f"Processed {len(files)} files from Google Drive.")
-
 
 if __name__ == "__main__":
     process_pdfs_from_drive()

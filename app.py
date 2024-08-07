@@ -43,7 +43,7 @@ pdf_folder_path = os.getenv("PDF_FOLDER_PATH")
 # Define circuit breakers
 db_breaker = pybreaker.CircuitBreaker(
     fail_max=3,
-    reset_timeout=86400,
+    reset_timeout=30,
     exclude=[ValueError, TypeError],
     listeners=[pybreaker.CircuitBreakerListener()]
 )
@@ -101,7 +101,7 @@ Objectif : Fournir des informations médicales précises, à jour et pertinentes
 
 Directives :
 1. Répondez en français, sauf demande contraire.
-2. Adaptez la longueur et le détail de vos réponses selon la complexité de la question, a preference de ne pas depasser 6 lignes, si l'utilisateur demande plus de details, vous pouvez deppaser cette limites.
+2. Adaptez la longueur et le détail de vos réponses selon la complexité de la question.
 3. Basez vos réponses sur les dernières preuves médicales et directives cliniques.
 4. Intégrez des informations spécifiques au contexte médical marocain quand c'est pertinent.
 5. Fournissez des explications claires sur les raisonnements diagnostiques et les recommandations de traitement.
@@ -140,7 +140,7 @@ def send_to_dlq(topic, message):
     logger.info(f"Sent message to DLQ topic: {dlq_topic}")
 
 
-def retry_with_backoff(max_attempts=10, start_delay=2, max_delay=1728000):
+def retry_with_backoff(max_attempts=3, start_delay=1, max_delay=60):
     def decorator(func):
         def wrapper(*args, **kwargs):
             attempts = 0
@@ -244,6 +244,8 @@ def process_dlq_messages(dlq_topic):
             logger.info(f"Successfully processed message from DLQ: {dlq_topic}")
         except Exception as e:
             logger.error(f"Failed to process message from DLQ {dlq_topic}: {str(e)}")
+            # You might want to implement further error handling here, 
+            # such as moving to a secondary DLQ or alerting an admin
 
 
 chat_history = []
@@ -258,15 +260,14 @@ def chat():
             return jsonify({"error": "No message provided"}), 400
         else:
             logger.info(f'Received message: {message}')
-            docs = retriever.invoke(message)
+            docs = retriever.get_relevant_documents(message)
             retrieved_context = "\n".join([
-                "\n".join([doc.page_content for doc in docs])
+                f"{'Profile' if doc.metadata['type'] == 'profile' else 'Report'}: {doc.page_content}"
+                for doc in docs
             ])
-            logger.info("retrieved the context")
             combined_context = f"{context}\n\nRelevant Information:\n{retrieved_context}\n\nQ: {message}\nA:"
-            response = qa_chain({"question": combined_context,
-                                 "chat_history": [(entry['question'], entry['answer']) for entry in chat_history]})
-            chat_history.append({"question": message, "answer": response['answer']})
+            response = qa_chain({"question": combined_context, "chat_history": chat_history})
+            chat_history.extend([message, response])
             return jsonify({"response": response['answer']})
     except Exception as e:
         logger.error(f"Error in chat endpoint: {str(e)}")
@@ -295,4 +296,4 @@ if __name__ == '__main__':
     report_dlq_thread.start()
 
     # Run Flask app
-    app.run(host='0.0.0.0', port=5000, debug=os.getenv("FLASK_DEBUG", "False").lower() == "true")
+    app.run(debug=os.getenv("FLASK_DEBUG", "False").lower() == "true")
