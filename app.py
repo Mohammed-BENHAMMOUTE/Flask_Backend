@@ -24,7 +24,7 @@ load_dotenv()
 app = Flask(__name__)
 CORS(app, origins=os.getenv("ALLOWED_ORIGINS", "http://localhost:3000").split(","))
 
-# Configure logging
+# Initialize logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
