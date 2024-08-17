@@ -12,6 +12,9 @@ services:
       - FLASK_DEBUG=False
       - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
       - CLIENT_SECRETS_FILE=/app/secrets/client_secrets.json
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY}
     volumes:
       - ./pdfs:/app/pdfs
       - ./secrets:/app/secrets
@@ -20,6 +23,8 @@ services:
         condition: service_healthy
       postgres:
         condition: service_started
+      redis:
+        condition: service_started
 
   kafka:
     image: confluentinc/cp-kafka:latest
@@ -27,10 +32,14 @@ services:
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
       KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 1
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_NUM_PARTITIONS: 1
     depends_on:
       - zookeeper
     healthcheck:
-      test: ["CMD-SHELL", "kafka-topics --bootstrap-server localhost:9092 --list"]
+      test: [ "CMD-SHELL", "kafka-topics --bootstrap-server localhost:9092 --list" ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -54,5 +63,13 @@ services:
     ports:
       - "5432:5432"
 
+  redis:
+    image: redis:latest
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
 volumes:
   postgres_data:
+  redis_data:

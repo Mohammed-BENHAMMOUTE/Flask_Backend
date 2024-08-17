@@ -1,4 +1,7 @@
 import os
+from functools import wraps
+# from urllib.request import localhost
+import jwt
 from flask import Flask, request, jsonify
 from kafka import KafkaConsumer, KafkaProducer
 import json
@@ -16,14 +19,65 @@ import logging
 import psycopg2
 import pybreaker
 import time
+from redis import Redis
 
 # Load environment variables
 load_dotenv()
+#Redis for chat history
+redis_client = Redis(
+    host = os.getenv("REDIS_HOST",'localhost'),
+    port = os.getenv("REDIS_PORT",6379),
+    db=0,
+    decode_responses=True
+);
+
+chat_History_Expiration = 3600 #the time I choose to delete the history
+
+#authentication
+# Ensure JWT_SECRET_KEY is a string
+JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY")
+if not JWT_SECRET_KEY or not isinstance(JWT_SECRET_KEY, str):
+    raise ValueError("JWT_SECRET_KEY must be a non-empty string")
+
+def token_required(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        token = None
+        if 'Authorization' in request.headers:
+            token = request.headers['Authorization'].split()[1]
+        if not token:
+            return jsonify({'error': 'Token is missing'}), 401
+        try:
+            data = jwt.decode(token, JWT_SECRET_KEY, algorithms=["HS512"])
+            current_user = data.get('claims', {})
+            if current_user.get('role') != 'MEDECIN':
+                return jsonify({'error': 'Unauthorized access'}), 403
+            return f(current_user['id'], *args, **kwargs)
+        except jwt.ExpiredSignatureError:
+            return jsonify({'error': 'Token has expired'}), 401
+        except jwt.InvalidTokenError:
+            return jsonify({'error': 'Invalid token'}), 401
+    return decorated
+
+def get_chat_history(user_id):
+    chat_history = redis_client.get(f"chat_history:{user_id}")
+    if chat_history:
+        return json.loads(chat_history)
+    return []
+
+def update_chat_history(user_id, question, answer):
+    chat_history = get_chat_history(user_id)
+    chat_history.append({"question": question, "answer": answer})
+    redis_client.setex(f"chat_history:{user_id}",
+                       chat_History_Expiration,
+                       json.dumps(chat_history))
+
+
+
 
 # Initialize Flask app
 app = Flask(__name__)
-CORS(app, origins=os.getenv("ALLOWED_ORIGINS", "http://localhost:3000").split(","))
-
+CORS(app, origins=os.getenv("ALLOWED_ORIGINS", "http://localhost:3000").split(","), supports_credentials=True)
 # Initialize logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -37,7 +91,7 @@ CONNECTION_STRING = os.getenv("PG_CONNECTION_STRING")
 # Create embeddings
 embedding = OpenAIEmbeddings()
 
-# Load PDFs
+# Loading PDFs
 pdf_folder_path = os.getenv("PDF_FOLDER_PATH")
 
 # Define circuit breakers
@@ -76,17 +130,17 @@ except Exception as e:
 
 
 # Load PDFs and add to vectorstore at startup
-def load_pdfs_to_vectorstore():
-    pdf_docs = load_pdf_docs()
-    if pdf_docs:
-        splits = text_splitter.split_documents(pdf_docs)
-        vectorstore.add_documents(splits)
-        logger.info(f"Loaded {len(splits)} document chunks from PDFs into the vector store.")
-    else:
-        logger.warning("No PDF documents found in the specified folder.")
+# def load_pdfs_to_vectorstore():
+#     pdf_docs = load_pdf_docs()
+#     if pdf_docs:
+#         splits = text_splitter.split_documents(pdf_docs)
+#         vectorstore.add_documents(splits)
+#         logger.info(f"Loaded {len(splits)} document chunks from PDFs into the vector store.")
+#     else:
+#         logger.warning("No PDF documents found in the specified folder.")
 
 
-load_pdfs_to_vectorstore()
+# load_pdfs_to_vectorstore()
 
 retriever = vectorstore.as_retriever()
 
@@ -246,41 +300,46 @@ def process_dlq_messages(dlq_topic):
             logger.error(f"Failed to process message from DLQ {dlq_topic}: {str(e)}")
 
 
-chat_history = []
-
-
 @app.route('/chatbot/ask', methods=['POST'])
-def chat():
+@token_required
+def chat(user_id):
     try:
         data = request.json
         message = data.get('message')
         if not message:
             return jsonify({"error": "No message provided"}), 400
-        else:
-            logger.info(f'Received message: {message}')
-            docs = retriever.invoke(message)
-            retrieved_context = "\n".join([
-                "\n".join([doc.page_content for doc in docs])
-            ])
-            logger.info("retrieved the context")
-            combined_context = f"{context}\n\nRelevant Information:\n{retrieved_context}\n\nQ: {message}\nA:"
-            response = qa_chain({"question": combined_context,
-                                 "chat_history": [(entry['question'], entry['answer']) for entry in chat_history]})
-            chat_history.append({"question": message, "answer": response['answer']})
-            return jsonify({"response": response['answer']})
+
+        logger.info(f'Received message from user {user_id}: {message}')
+
+        chat_history = get_chat_history(user_id)
+
+        docs = retriever.invoke(message)
+        retrieved_context = "\n".join([
+            "\n".join([doc.page_content for doc in docs])
+        ])
+        logger.info("Retrieved the context")
+        combined_context = f"{context}\n\nRelevant Information:\n{retrieved_context}\n\nQ: {message}\nA:"
+        response = qa_chain({
+            "question": combined_context,
+            "chat_history": [(entry['question'], entry['answer']) for entry in chat_history]
+        })
+
+        update_chat_history(user_id, message, response['answer'])
+
+        return jsonify({"response": response['answer']})
     except Exception as e:
-        logger.error(f"Error in chat endpoint: {str(e)}")
+        logger.error(f"Error in chat endpoint for user {user_id}: {str(e)}")
         return jsonify({"error": "An internal error occurred"}), 500
 
 
-@app.route('/load_pdfs', methods=['POST'])
-def load_pdfs():
-    try:
-        load_pdfs_to_vectorstore()
-        return jsonify({"message": "PDFs processed and added to the vector store"}), 200
-    except Exception as e:
-        logger.error(f"Error in load_pdfs endpoint: {str(e)}")
-        return jsonify({"error": "An internal error occurred"}), 500
+# @app.route('/load_pdfs', methods=['POST'])
+# def load_pdfs():
+#     try:
+#         load_pdfs_to_vectorstore()
+#         return jsonify({"message": "PDFs processed and added to the vector store"}), 200
+#     except Exception as e:
+#         logger.error(f"Error in load_pdfs endpoint: {str(e)}")
+#         return jsonify({"error": "An internal error occurred"}), 500
 
 
 if __name__ == '__main__':
