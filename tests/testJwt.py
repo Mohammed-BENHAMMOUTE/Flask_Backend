@@ -18,10 +18,10 @@ JWT_SECRET_KEY = get_jwt_secret_key()
 
 # Create the payload
 payload = {
-    "exp": datetime.utcnow() + timedelta(hours=1),  # Token expires in 1 hour
+    "exp": datetime.utcnow() + timedelta(hours=10),  # Token expires in 1 hour
     "iat": datetime.utcnow(),
     "claims": {
-        "role": "MEDECIN",
+        "role": "ROLE_MEDECIN",
         "id": "test_doctor_id"
     }
 }

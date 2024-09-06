@@ -1,18 +1,11 @@
 FROM python:3.9-slim
 
-# Set working directory
 WORKDIR /app
 
-# Copy requirements file
-COPY requirements.txt .
+COPY . /app
 
-# Upgrade pip and install requirements
-RUN pip3 install --no-cache-dir --upgrade pip
-RUN pip3 install --no-cache-dir -r requirements.txt
-RUN pip3 install --no-cache-dir flask-cors
+RUN pip install -r requirements.txt
 
-# Copy the rest of the application
-COPY . .
+EXPOSE 5000
 
-# Specify the command to run the application
-CMD ["python", "app.py"]
+CMD ["sh", "-c", "python scheduler.py & python app.py"]

@@ -33,8 +33,7 @@ redis_client = Redis(
 
 chat_History_Expiration = 3600 #the time I choose to delete the history
 
-#authentication
-# Ensure JWT_SECRET_KEY is a string
+
 JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY")
 if not JWT_SECRET_KEY or not isinstance(JWT_SECRET_KEY, str):
     raise ValueError("JWT_SECRET_KEY must be a non-empty string")
@@ -44,18 +43,23 @@ def token_required(f):
     def decorated(*args, **kwargs):
         token = None
         if 'Authorization' in request.headers:
-            token = request.headers['Authorization'].split()[1]
+            auth_header = request.headers['Authorization']
+            print(f"Received Authorization header: {auth_header}")  # Debug print
+            token = auth_header.split()[1] if len(auth_header.split()) > 1 else None
         if not token:
             return jsonify({'error': 'Token is missing'}), 401
         try:
+            print(f"Attempting to decode token: {token}")  # Debug print
             data = jwt.decode(token, JWT_SECRET_KEY, algorithms=["HS512"])
+            print(f"Decoded token data: {data}")  # Debug print
             current_user = data.get('claims', {})
-            if current_user.get('role') != 'MEDECIN':
+            if current_user.get('role') != 'ROLE_MEDECIN':
                 return jsonify({'error': 'Unauthorized access'}), 403
             return f(current_user['id'], *args, **kwargs)
         except jwt.ExpiredSignatureError:
             return jsonify({'error': 'Token has expired'}), 401
-        except jwt.InvalidTokenError:
+        except jwt.InvalidTokenError as e:
+            print(f"Invalid token error: {str(e)}")  # Debug print
             return jsonify({'error': 'Invalid token'}), 401
     return decorated
 
@@ -149,26 +153,32 @@ llm = ChatOpenAI(model_name="gpt-4o", temperature=0.7)
 qa_chain = ConversationalRetrievalChain.from_llm(llm, retriever=retriever)
 
 context = """
- Vous êtes un assistant médical avancé conçu pour aider les médecins et professionnels de santé au Maroc. Votre base de connaissances couvre la médecine générale et spécialisée, avec une expertise particulière sur les pratiques et médicaments marocains.
+Vous êtes un assistant médical avancé conçu pour les médecins et professionnels de santé au Maroc. Votre rôle est d'être une ressource fiable, fournissant des informations précises et pertinentes pour la pratique médicale quotidienne.
 
-Objectif : Fournir des informations médicales précises, à jour et pertinentes pour aider les professionnels de santé dans leur pratique quotidienne.
+Modes de fonctionnement :
+1. Mode Diagnostic : Lorsqu'un médecin présente des symptômes, posez des questions ciblées pour affiner le diagnostic potentiel.
+2. Mode Informatif : Répondez directement aux questions sur des informations médicales spécifiques.
 
-Directives :
-1. Répondez en français, sauf demande contraire.
-2. Adaptez la longueur et le détail de vos réponses selon la complexité de la question, a preference de ne pas depasser 6 lignes, si l'utilisateur demande plus de details, vous pouvez deppaser cette limites.
-3. Basez vos réponses sur les dernières preuves médicales et directives cliniques.
-4. Intégrez des informations spécifiques au contexte médical marocain quand c'est pertinent.
-5. Fournissez des explications claires sur les raisonnements diagnostiques et les recommandations de traitement.
-6. Incluez des conseils sur la prévention et la gestion des maladies si approprié.
-7. Vous pouvez suggérer des diagnostics potentiels et des traitements, y compris des médicaments marocains spécifiques.
+Directives générales :
+- Répondez toujours en français, sauf demande explicite d'une autre langue.
+- Adaptez automatiquement le mode (Diagnostic ou Informatif) selon la nature de la question du médecin.
+- Fournissez des réponses courtes et concises, généralement limitées à 3-4 lignes.
+- Maintenez un ton professionnel et scientifique.
+- Basez-vous sur les données médicales les plus récentes et les directives cliniques actuelles.
+- Intégrez des informations spécifiques au contexte médical marocain quand c'est pertinent.
+- Si vous n'avez pas d'information contextuelle, répondez au mieux de vos capacités en le précisant.
+- Suggérez des diagnostics, traitements ou médicaments marocains spécifiques si approprié.
+- Rappelez l'importance du jugement clinique et de l'évaluation individuelle de chaque patient.
 
-Ton : Professionnel, précis et scientifique, tout en restant accessible et collaboratif.
+En mode Diagnostic :
+- Posez des questions ciblées pour obtenir plus d'informations sur les symptômes.
+- Proposez des diagnostics différentiels possibles basés sur les informations fournies.
 
-Rappels :
-- Bien que vos réponses soient basées sur des informations médicales solides, rappelez aux utilisateurs l'importance du jugement clinique et de l'évaluation individuelle de chaque patient.
-- Soulignez l'importance de la confidentialité des informations médicales.
+En mode Informatif :
+- Fournissez des informations concises et directes en réponse aux questions.
+- Citez des sources ou des directives médicales si pertinent.
 
-Votre rôle est d'être une ressource fiable et un support pour les professionnels de santé, en les aidant à prendre des décisions éclairées pour leurs patients.
+Rappel : Soulignez l'importance de la confidentialité des informations médicales dans toutes vos interactions.
 """
 
 
@@ -331,15 +341,6 @@ def chat(user_id):
         logger.error(f"Error in chat endpoint for user {user_id}: {str(e)}")
         return jsonify({"error": "An internal error occurred"}), 500
 
-
-# @app.route('/load_pdfs', methods=['POST'])
-# def load_pdfs():
-#     try:
-#         load_pdfs_to_vectorstore()
-#         return jsonify({"message": "PDFs processed and added to the vector store"}), 200
-#     except Exception as e:
-#         logger.error(f"Error in load_pdfs endpoint: {str(e)}")
-#         return jsonify({"error": "An internal error occurred"}), 500
 
 
 if __name__ == '__main__':
