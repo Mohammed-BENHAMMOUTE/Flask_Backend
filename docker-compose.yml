@@ -6,19 +6,19 @@ services:
       - "5000:5000"
     environment:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - PG_CONNECTION_STRING=postgresql://postgres:mohammed@postgres:5432/pg_embedding
-      - PDF_FOLDER_PATH=/app/pdfs
-      - ALLOWED_ORIGINS=http://localhost:3000
-      - FLASK_DEBUG=False
+      - PG_CONNECTION_STRING=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      - PDF_FOLDER_PATH=${PDF_FOLDER_PATH}
+      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS}
+      - FLASK_DEBUG=${FLASK_DEBUG}
       - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
-      - CLIENT_SECRETS_FILE=${CLIENT_SECRETS_FILE}
+      - CLIENT_SECRETS_FILE=/app/${CLIENT_SECRETS_FILE}
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - JWT_SECRET_KEY=${JWT_SECRET_KEY}
       - GOOGLE_DRIVE_FOLDER_ID=${GOOGLE_DRIVE_FOLDER_ID}
     volumes:
       - ./pdfs:/app/pdfs
-      - ./client_secrets.json:/app/client_secrets.json
+      - ./${CLIENT_SECRETS_FILE}:/app/${CLIENT_SECRETS_FILE}
     depends_on:
       kafka:
         condition: service_healthy
@@ -56,9 +56,9 @@ services:
       context: .
       dockerfile: Dockerfile.postgres
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: mohammed
-      POSTGRES_DB: pg_embedding
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./init.sql:/docker-entrypoint-initdb.d/init.sql
